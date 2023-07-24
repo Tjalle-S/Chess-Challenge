@@ -7,6 +7,9 @@ using System.Collections.Generic;
 
 public class MyBot : IChessBot
 {
+    /// <summary>
+    /// Lookup tables for piece value on different squares.
+    /// </summary>
     private readonly int[][] positionalLookups =
     {
         new int[] // Pawns
@@ -80,6 +83,9 @@ public class MyBot : IChessBot
     private Board _board;
     private bool _isWhite;
 
+    private int _startPly;
+    private Move _bestMove;
+
     /// <summary>
     /// Make a move.
     /// </summary>
@@ -98,17 +104,22 @@ public class MyBot : IChessBot
 
         _board = board;
         _isWhite = board.IsWhiteToMove;
+        _startPly = board.PlyCount;
+        _numcutoffs = 0;
 
+        _ = NegaMax(5, int.MinValue + 1, int.MaxValue - 1); // Discard can be removed to save tokens.
+        Console.WriteLine(_numcutoffs);
+        return _bestMove;
         //Evaluate();
 
-        return _board.GetLegalMoves().MinBy(move =>
-        {
-            // Temporary. Should be something with negamax later.
-            _board.MakeMove(move);
-            int eval = Evaluate();// * (_isWhite ? 1 : -1);
-            _board.UndoMove(move);
-            return eval;
-        });
+        //return _board.GetLegalMoves().MinBy(move =>
+        //{
+        //    // Temporary. Should be something with negamax later.
+        //    _board.MakeMove(move);
+        //    int eval = Evaluate();// * (_isWhite ? 1 : -1);
+        //    _board.UndoMove(move);
+        //    return eval;
+        //});
     }
 
     /// <summary>
@@ -120,44 +131,49 @@ public class MyBot : IChessBot
     /// <returns>The evaluation of the current position.</returns>
     int NegaMax(int depth, int alpha, int beta)
     {
+        // Can only occur during search, not at root, so setting _bestMove not required.
         if (_board.IsDraw()) return 0;
+        if (_board.IsInCheckmate()) return int.MinValue + _board.PlyCount;
 
-        if (_board.IsInCheckmate()) return _board.IsWhiteToMove ? int.MinValue : int.MaxValue;
+        if (depth == 0) return Evaluate(); // TODO: quiescence search.
 
-        if (depth == 0) return Evaluate();
-
-        foreach (Move move in _board.GetLegalMoves())
+        Span<Move> legalMoves = stackalloc Move[218];
+        _board.GetLegalMovesNonAlloc(ref legalMoves);
+        for (int i = 0; i < legalMoves.Length; i++)
         {
+            Move move = legalMoves[i];
             _board.MakeMove(move);
-
-            // Recursive stuff.
-
+            int evaluation = -NegaMax(depth - 1, -beta, -alpha);
             _board.UndoMove(move);
+
+            if (evaluation >= beta)
+            {
+                _numcutoffs++;
+                return beta;
+            }
+            if (evaluation > alpha)
+            {
+                alpha = evaluation;
+
+                if (_board.PlyCount == _startPly) _bestMove = move;
+            }
         }
 
-        return 0;
+        return alpha;
     }
+
+    int _numcutoffs = 0;
 
     /// <summary>
     /// Performs static evaluation of the current position.
     /// </summary>
-    /// <returns>An integer score. Positive means better for white.</returns>
+    /// <returns>An integer score. Positive means better for the player to move.</returns>
     int Evaluate()
     {
         int score = _board.GetAllPieceLists()
             .Sum(list => (list.IsWhitePieceList == _board.IsWhiteToMove ? 1 : -1) * list
                 .Sum(piece => positionalLookups[(int)piece.PieceType - 1][GetLookupIndex(piece.IsWhite ? new(piece.Square.Index ^ 56): piece.Square)]));
 
-        //int materialScore = _board.GetAllPieceLists()
-        //    .Sum(list => list.Count
-        //        * pieceValues[(int)list.TypeOfPieceInList - 1]
-        //        * (list.IsWhitePieceList ? 1 : -1));
-
-        //for (int i = 0; i < 64; i++)
-        //{
-        //    Square square = new(i);
-        //    Console.WriteLine($"{square.Index}: {GetLookupIndex(square)}");
-        //}
 
         return score;
     }
