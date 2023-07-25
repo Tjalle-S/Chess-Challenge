@@ -94,7 +94,6 @@ public class MyBot : IChessBot
     /// <returns>The best move acoording to the bot.</returns>
     public Move Think(Board board, Timer timer)
     {
-        //Console.WriteLine((int)PieceType.King - PieceType.Pawn);
         //var list = positionalLookups[4].Select(i => i + 900).ToList();
         //for (int i = 0; i < 31; i += 4)
         //{

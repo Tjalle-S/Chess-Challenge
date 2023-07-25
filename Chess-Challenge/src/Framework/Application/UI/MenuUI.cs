@@ -2,6 +2,7 @@
 using System.Numerics;
 using System;
 using System.IO;
+using System.Threading.Tasks;
 
 namespace ChessChallenge.Application
 {
@@ -28,6 +29,10 @@ namespace ChessChallenge.Application
             if (NextButtonInRow("MyBot vs EvilBot", ref buttonPos, spacing, buttonSize))
             {
                 controller.StartNewBotMatch(ChallengeController.PlayerType.MyBot, ChallengeController.PlayerType.EvilBot);
+            }
+            if (NextButtonInRow("Fast Batch Play", ref buttonPos, spacing, buttonSize))
+            {
+                _ = Task.Run(() => FastMatches.Play(Settings.GameDurationMilliseconds));
             }
 
             // Page buttons
