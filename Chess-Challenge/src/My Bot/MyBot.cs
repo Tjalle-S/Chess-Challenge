@@ -94,32 +94,21 @@ public class MyBot : IChessBot
     /// <returns>The best move acoording to the bot.</returns>
     public Move Think(Board board, Timer timer)
     {
+        //Console.WriteLine((int)PieceType.King - PieceType.Pawn);
         //var list = positionalLookups[4].Select(i => i + 900).ToList();
         //for (int i = 0; i < 31; i += 4)
         //{
         //    Console.WriteLine($"{list[i]}, {list[i + 1]}, {list[i + 2]}, {list[i + 3]},");
         //}
 
-        //positionalLookups[0].Select(i => i + 100).ToList().ForEach(i => Console.WriteLine($"{i}, "));
-
         _board = board;
         _isWhite = board.IsWhiteToMove;
         _startPly = board.PlyCount;
-        _numcutoffs = 0;
+        _totalNodes = 0;
 
-        _ = NegaMax(5, int.MinValue + 1, int.MaxValue - 1); // Discard can be removed to save tokens.
-        Console.WriteLine(_numcutoffs);
+        _ = NegaMax(6, int.MinValue + 1, int.MaxValue - 1); // Discard can be removed to save tokens.
+        Console.WriteLine(_totalNodes);
         return _bestMove;
-        //Evaluate();
-
-        //return _board.GetLegalMoves().MinBy(move =>
-        //{
-        //    // Temporary. Should be something with negamax later.
-        //    _board.MakeMove(move);
-        //    int eval = Evaluate();// * (_isWhite ? 1 : -1);
-        //    _board.UndoMove(move);
-        //    return eval;
-        //});
     }
 
     /// <summary>
@@ -131,6 +120,8 @@ public class MyBot : IChessBot
     /// <returns>The evaluation of the current position.</returns>
     int NegaMax(int depth, int alpha, int beta)
     {
+        _totalNodes++; // For debugging purposes only.
+
         // Can only occur during search, not at root, so setting _bestMove not required.
         if (_board.IsDraw()) return 0;
         if (_board.IsInCheckmate()) return int.MinValue + _board.PlyCount;
@@ -139,18 +130,27 @@ public class MyBot : IChessBot
 
         Span<Move> legalMoves = stackalloc Move[218];
         _board.GetLegalMovesNonAlloc(ref legalMoves);
-        for (int i = 0; i < legalMoves.Length; i++)
+
+        int numMoves = legalMoves.Length;
+
+        Span<int> evalGuesses = stackalloc int[218];
+        for (int i = 0; i < numMoves; i++)
         {
             Move move = legalMoves[i];
+            evalGuesses[i] = -((int)move.PromotionPieceType + (int)move.CapturePieceType - (int)move.MovePieceType);
+        }
+        evalGuesses = evalGuesses[..numMoves];
+        evalGuesses.Sort(legalMoves);
+
+        for (int i = 0; i < numMoves; i++)
+        {
+            Move move = legalMoves[i];
+
             _board.MakeMove(move);
             int evaluation = -NegaMax(depth - 1, -beta, -alpha);
             _board.UndoMove(move);
 
-            if (evaluation >= beta)
-            {
-                _numcutoffs++;
-                return beta;
-            }
+            if (evaluation >= beta) return beta;
             if (evaluation > alpha)
             {
                 alpha = evaluation;
@@ -162,7 +162,7 @@ public class MyBot : IChessBot
         return alpha;
     }
 
-    int _numcutoffs = 0;
+    int _totalNodes = 0;
 
     /// <summary>
     /// Performs static evaluation of the current position.
