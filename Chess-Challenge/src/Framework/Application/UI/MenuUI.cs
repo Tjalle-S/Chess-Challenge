@@ -32,7 +32,7 @@ namespace ChessChallenge.Application
             }
             if (NextButtonInRow("Fast Batch Play", ref buttonPos, spacing, buttonSize))
             {
-                _ = Task.Run(() => FastMatches.Play(Settings.GameDurationMilliseconds));
+                _ = Task.Run(() => FastMatches.Play(Settings.GameDurationMilliseconds, Settings.NumGamesForTest));
             }
 
             // Page buttons

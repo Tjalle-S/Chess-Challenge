@@ -6,6 +6,8 @@ namespace ChessChallenge.Application
     {
         public const string Version = "1.15";
 
+        public const int NumGamesForTest = 1000;
+
         // Game settings
         public const int GameDurationMilliseconds = 300 * 1000;
         public const float MinMoveDelay = 0;

@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
@@ -7,6 +6,8 @@ using ChessChallenge.API;
 using ChessChallenge.Application;
 using ChessChallenge.Chess;
 using ChessChallenge.Example;
+
+namespace ChessChallenge;
 
 public static class FastMatches
 {
@@ -20,15 +21,17 @@ public static class FastMatches
     private static int Draws       = 0;
     private static int Progress    = 0;
 
-    public static void Play(int milliseconds)
+    public static void Play(int milliseconds, int numGames)
     {
-        Console.WriteLine("Started 1000 matches.");
+        Console.WriteLine($"Started {numGames} matches.");
+        Console.Write("0%");
+
         var fens = FileHelper.ReadResourceFile("Fens.txt").Split('\n').Where(fen => fen.Length > 0).ToArray();
 
-        Parallel.For(0, 1000, i =>
+        Parallel.For(0, numGames, new() { MaxDegreeOfParallelism = 1 }, i =>
         {
             Stopwatch stopwatch = new();
-            ChessChallenge.Chess.Board board = new();
+            Chess.Board board = new();
             board.LoadPosition(fens[i / 2]);
 
             IChessBot whitePlayer = new MyBot();
@@ -56,7 +59,7 @@ public static class FastMatches
                     lock (ProgressLock)
                     {
                         Progress++;
-                        if (Progress % 10 == 0) Console.Write($"\r{Progress / 10}% ");
+                        Console.Write($"\r{Progress * 100 / numGames}%");
                     }
 
                 if (Arbiter.IsWhiteWinsResult(state) && whitePlayer is MyBot)
@@ -102,7 +105,7 @@ public static class FastMatches
         });
 
         Console.WriteLine($"\rMyBot wins: {MyBotWins}");
-        Console.WriteLine($"Evil bot wins: {EvilBotWins}");
+        Console.WriteLine($"EvilBot wins: {EvilBotWins}");
         Console.WriteLine($"Draws: {Draws}");
 
         MyBotWins = 0;
@@ -111,18 +114,25 @@ public static class FastMatches
         Progress = 0;
     }
 
-    private static void MakeMove(ChessChallenge.Chess.Board board, IChessBot bot, Stopwatch stopwatch, ref int milliseconds)
+    private static void MakeMove(Chess.Board board, IChessBot bot, Stopwatch stopwatch, ref int milliseconds)
     {
-        ChessChallenge.API.Board botBoard = new(new(board));
+        API.Board botBoard = new(board);
         Timer timer = new Timer(milliseconds);
+        //Span<API.Move> legalMoves = stackalloc API.Move[218];
+        //botBoard.GetLegalMovesNonAlloc(ref legalMoves);
 
         stopwatch.Start();
+        API.Move move1 = bot.Think(botBoard, timer);
 
-        ChessChallenge.Chess.Move move = new(bot.Think(botBoard, timer).RawValue);
+        //if (!legalMoves.Contains(move1)) return false;
+
+        Chess.Move move = new(move1.RawValue);
 
         milliseconds -= (int)stopwatch.ElapsedMilliseconds;
         stopwatch.Reset();
 
-        board.MakeMove(move);
+        board.MakeMove(move, false);
+
+        //return true;
     }
 }
