@@ -105,10 +105,11 @@ public class EvilBot : IChessBot
         _board = board;
         _isWhite = board.IsWhiteToMove;
         _startPly = board.PlyCount;
-        _totalNodes = 0;
+        _normalNodes = 0;
+        _quiescentNodes = 0;
 
-        _ = NegaMax(6, int.MinValue + 1, int.MaxValue - 1); // Discard can be removed to save tokens.
-        //Console.WriteLine(_totalNodes);
+        _ = NegaMax(5, int.MinValue + 1, int.MaxValue - 1); // Discard can be removed to save tokens.
+        //Console.WriteLine($"Standard search: {_normalNodes} nodes. Quiescent search: {_quiescentNodes} nodes");
         return _bestMove;
     }
 
@@ -119,18 +120,20 @@ public class EvilBot : IChessBot
     /// <param name="alpha">The alpha value for pruning.</param>
     /// <param name="beta">The beta value for pruning.</param>
     /// <returns>The evaluation of the current position.</returns>
-    int NegaMax(int depth, int alpha, int beta)
+    int NegaMax(int depth, int alpha, int beta, bool quiescent = false)
     {
-        _totalNodes++; // For debugging purposes only.
+        // For debugging purposes only.
+        if (quiescent) _quiescentNodes++;
+        else _normalNodes++;
 
         // Can only occur during search, not at root, so setting _bestMove not required.
         if (_board.IsDraw()) return 0;
         if (_board.IsInCheckmate()) return int.MinValue + _board.PlyCount;
 
-        if (depth == 0) return Evaluate(); // TODO: quiescence search.
+        if (depth == 0) return NegaMax(-1, alpha, beta, true);
 
         Span<Move> legalMoves = stackalloc Move[218];
-        _board.GetLegalMovesNonAlloc(ref legalMoves);
+        _board.GetLegalMovesNonAlloc(ref legalMoves, quiescent);
 
         int numMoves = legalMoves.Length;
 
@@ -143,12 +146,16 @@ public class EvilBot : IChessBot
         evalGuesses = evalGuesses[..numMoves];
         evalGuesses.Sort(legalMoves);
 
+        int evaluation = quiescent ? Evaluate() : int.MinValue + 1;
+        if (evaluation >= beta) return beta;
+        alpha = Math.Max(alpha, evaluation);
+
         for (int i = 0; i < numMoves; i++)
         {
             Move move = legalMoves[i];
 
             _board.MakeMove(move);
-            int evaluation = -NegaMax(depth - 1, -beta, -alpha);
+            evaluation = -NegaMax(depth - 1, -beta, -alpha, quiescent);
             _board.UndoMove(move);
 
             if (evaluation >= beta) return beta;
@@ -163,7 +170,8 @@ public class EvilBot : IChessBot
         return alpha;
     }
 
-    int _totalNodes = 0;
+    int _normalNodes = 0;
+    int _quiescentNodes = 0;
 
     /// <summary>
     /// Performs static evaluation of the current position.
@@ -174,7 +182,6 @@ public class EvilBot : IChessBot
         int score = _board.GetAllPieceLists()
             .Sum(list => (list.IsWhitePieceList == _board.IsWhiteToMove ? 1 : -1) * list
                 .Sum(piece => positionalLookups[(int)piece.PieceType - 1][GetLookupIndex(piece.IsWhite ? new(piece.Square.Index ^ 56) : piece.Square)]));
-
 
         return score;
     }

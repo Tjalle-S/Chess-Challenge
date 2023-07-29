@@ -4,80 +4,73 @@ using System;
 using System.Linq;
 using System.Numerics;
 using System.Collections.Generic;
-using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 public class MyBot : IChessBot
 {
     /// <summary>
     /// Lookup tables for piece value on different squares.
     /// </summary>
-    private readonly int[][] positionalLookups =
+    private readonly ulong[,] positionalLookups =
     {
-        new int[] // Pawns
         {
-            0,   0,   0,   0,
-            150, 150, 150, 150,
-            110, 110, 120, 130,
-            105, 105, 110, 125,
-            100, 100, 100, 130,
-            105, 95,  90,  100,
-            105, 110, 110, 80,
-            0,   0,   0,   0
+            0,
+            42221890761523350,
+            36592262375669870,
+            35184844542115945,
+            36592176475668580,
+            28147884224348265,
+            22518470590464105,
+            0
         },
-        new int[] // Knights.
         {
-            270, 280, 290, 290,
-            280, 300, 320, 320,
-            290, 320, 320, 335,
-            290, 325, 335, 340,
-            290, 320, 335, 340,
-            290, 325, 325, 335,
-            280, 300, 320, 320,
-            270, 280, 290, 290
+            81628988804956430,
+            90073366956605720,
+            94295491608576290,
+            95702930916966690,
+            95702930916639010,
+            94295513083740450,
+            90073366956605720,
+            81628988804956430
         },
-        new int[] // Bishops.
         {
-            310, 320, 320, 320,
-            320, 330, 330, 330,
-            320, 330, 335, 340,
-            320, 335, 335, 340,
-            320, 330, 340, 340,
-            320, 340, 340, 340,
-            320, 335, 330, 330,
-            310, 320, 320, 320
+            90073366957916470,
+            92888159675351360,
+            95702930917294400,
+            95702930917622080,
+            95702952392130880,
+            95702952392786240,
+            92888159675679040,
+            90073366957916470
         },
-        new int[] // Rooks.
         {
-            500, 500, 500, 500,
-            505, 510, 510, 510,
-            495, 500, 500, 500,
-            495, 500, 500, 500,
-            495, 500, 500, 500,
-            495, 500, 500, 500,
-            495, 500, 500, 500,
-            500, 500, 500, 505,
+            140739635871744500,
+            143554428589179385,
+            140739635871744495,
+            140739635871744495,
+            140739635871744495,
+            140739635871744495,
+            140739635871744495,
+            142147010755297780
         },
-        new int[] // Queen.
         {
-            880, 890, 890, 895,
-            890, 900, 900, 900,
-            890, 900, 905, 905,
-            895, 900, 905, 905,
-            900, 900, 905, 905,
-            890, 905, 905, 905,
-            890, 900, 905, 900,
-            880, 890, 890, 895
+            251923926735258480,
+            253331344569140090,
+            254738740927529850,
+            254738740927529855,
+            254738740927529860,
+            254738740927857530,
+            253331366043976570,
+            251923926735258480
         },
-        new int[] // King.
         {
-            -30, -40, -40, -50,
-            -30, -40, -40, -50,
-            -30, -40, -40, -50,
-            -30, -40, -40, -50,
-            -20, -30, -30, -40,
-            -10, -20, -20, -20,
-             20,  20,  0,   0,
-             20,  30,  10,  0,
+            239257423932293990,
+            239257423932293990,
+            239257423932293990,
+            239257423932293990,
+            242072216649728880,
+            247701759134270330,
+            253331344570450840,
+            253331387520779160
         }
     };
 
@@ -95,11 +88,7 @@ public class MyBot : IChessBot
     /// <returns>The best move acoording to the bot.</returns>
     public Move Think(Board board, Timer timer)
     {
-        //var list = positionalLookups[4].Select(i => i + 900).ToList();
-        //for (int i = 0; i < 31; i += 4)
-        //{
-        //    Console.WriteLine($"{list[i]}, {list[i + 1]}, {list[i + 2]}, {list[i + 3]},");
-        //}
+        //LookupCompactor.Compact();
 
         _board = board;
         _isWhite = board.IsWhiteToMove;
@@ -107,7 +96,7 @@ public class MyBot : IChessBot
         _normalNodes = 0;
         _quiescentNodes = 0;
 
-        _ = NegaMax(6, int.MinValue + 1, int.MaxValue - 1); // Discard can be removed to save tokens.
+        _ = NegaMax(5, int.MinValue + 1, int.MaxValue - 1); // Discard can be removed to save tokens.
         //Console.WriteLine($"Standard search: {_normalNodes} nodes. Quiescent search: {_quiescentNodes} nodes");
         return _bestMove;
     }
@@ -179,11 +168,17 @@ public class MyBot : IChessBot
     int Evaluate()
     {
         int score = _board.GetAllPieceLists()
-            .Sum(list => (list.IsWhitePieceList == _board.IsWhiteToMove ? 1 : -1) * list
-                .Sum(piece => positionalLookups[(int)piece.PieceType - 1][GetLookupIndex(piece.IsWhite ? new(piece.Square.Index ^ 56): piece.Square)]));
+            .Sum(list => (list.IsWhitePieceList == _board.IsWhiteToMove ? 1 : -1) *
+                list.Sum(LookupPieceValue));
 
         return score;
     }
 
-    int GetLookupIndex(Square square) => 4 * square.Rank + Math.Min(square.File, 7 - square.File);
+    int LookupPieceValue(Piece piece)
+    {
+        Square square = piece.IsWhite ? new(piece.Square.Index ^ 56) : piece.Square;
+        int offset = Math.Min(square.File, 7 - square.File) * 16;
+
+        return (int)((positionalLookups[(int)piece.PieceType - 1, square.Rank] & 0xFFFFul << offset) >> offset);
+    }
 }

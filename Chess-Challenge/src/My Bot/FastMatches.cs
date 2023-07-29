@@ -24,7 +24,7 @@ public static class FastMatches
     public static void Play(int milliseconds, int numGames)
     {
         Console.WriteLine($"Started {numGames} matches.");
-        Console.Write("0%");
+        Console.Write($"0/{numGames}");
 
         var fens = FileHelper.ReadResourceFile("Fens.txt").Split('\n').Where(fen => fen.Length > 0).ToArray();
 
@@ -59,7 +59,7 @@ public static class FastMatches
                     lock (ProgressLock)
                     {
                         Progress++;
-                        Console.Write($"\r{Progress * 100 / numGames}%");
+                        Console.Write($"\r{Progress}/{numGames}");
                     }
 
                 if (Arbiter.IsWhiteWinsResult(state) && whitePlayer is MyBot)
