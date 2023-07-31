@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Linq;
-using System.Runtime.InteropServices;
 
 public static class LookupCompactor
 {
@@ -21,12 +20,12 @@ public static class LookupCompactor
         {
             270, 280, 290, 290,
             280, 300, 320, 320,
-            290, 320, 320, 335,
+            290, 320, 330, 335,
             290, 325, 335, 340,
             290, 320, 335, 340,
-            290, 325, 325, 335,
-            280, 300, 320, 320,
-            270, 280, 290, 290
+            290, 325, 330, 335,
+            280, 300, 320, 325,
+            270, 280, 290, 290,
         },
         // Bishops.
         {
@@ -76,7 +75,12 @@ public static class LookupCompactor
 
     public static void Compact()
     {
-        for (int j = 0; j < lookups.Length; j++)
+        //for (int i = 0; i < 32; i += 4)
+        //{
+        //    Console.WriteLine($"{lookups[1, i] + 320}, {lookups[1, i + 1] + 320}, {lookups[1, i + 2] + 320}, {lookups[1, i + 3] + 320},");
+        //}
+
+        for (int j = 0; j < 6; j++)
         {
             //ulong[] table = lookups[j];
             var newTable = new ulong[8];
@@ -92,31 +96,9 @@ public static class LookupCompactor
                     | (ulong)val2 << 16
                     | (ulong)val3 << 32
                     | (ulong)val4 << 48;
-
-                //var val = newTable[i / 4];
-                //Console.WriteLine(val & 0xFFFF);
-                //Console.WriteLine((val & (0xFFFFul << 16)) >> 16);
-                //Console.WriteLine((val & (0xFFFFul << 32)) >> 32);
-                //Console.WriteLine((val & (0xFFFFul << 48)) >> 48);
             }
 
             Console.WriteLine("{\n    " + string.Join(",\n    ", newTable) + "\n},");
         }
     }
-
-    //public static void Decode(ulong[][] lookups)
-    //{
-    //    foreach (var table in lookups)
-    //    {
-    //        var values = table.SelectMany(GetValues);
-    //    }
-
-    //    static IEnumerable<int> GetValues(ulong value)
-    //    {
-    //        yield return (int)(value & 0xFFFF);
-    //        yield return (int)((value & (0xFFFFul << 16)) >> 16);
-    //        yield return (int)((value & (0xFFFFul << 32)) >> 32);
-    //        yield return (int)((value & (0xFFFFul << 48)) >> 48);
-    //    }
-    //}
 }
