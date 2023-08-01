@@ -4,12 +4,17 @@ using System;
 using System.Linq;
 using System.Numerics;
 using System.Collections.Generic;
+
 using static System.Math;
+using static ChessChallenge.API.BitboardHelper;
 
 namespace ChessChallenge.Example;
 
 public class EvilBot : IChessBot
 {
+    //private const ulong FileA = 0x0101010101010101;
+    //private const ulong FileH = 0x8080808080808080;
+
     /// <summary>
     /// Lookup tables for piece value on different squares.
     /// </summary>
@@ -92,14 +97,13 @@ public class EvilBot : IChessBot
     public Move Think(Board board, Timer timer)
     {
         //LookupCompactor.Compact();
-
         _board = board;
         _isWhite = board.IsWhiteToMove;
         _startPly = board.PlyCount;
-        _normalNodes = 0;
-        _quiescentNodes = 0;
+        _normalNodes = 0; // #DEBUG
+        _quiescentNodes = 0; // #DEBUG
 
-        _ = NegaMax(5, int.MinValue + 1, int.MaxValue - 1); // Discard can be removed to save tokens.
+        _ = NegaMax(4, -int.MaxValue, int.MaxValue); // Discard can be removed to save tokens.
         //Console.WriteLine($"Standard search: {_normalNodes} nodes. Quiescent search: {_quiescentNodes} nodes");
         return _bestMove;
     }
@@ -107,24 +111,22 @@ public class EvilBot : IChessBot
     /// <summary>
     /// Performs a minimax search with alpha-beta pruning.
     /// </summary>
-    /// <param name="depth">The maximum search depth.</param>
+    /// <param name="depth">The maximum search depth. A deprh of 0 or less means quiescent search.</param>
     /// <param name="alpha">The alpha value for pruning.</param>
     /// <param name="beta">The beta value for pruning.</param>
     /// <returns>The evaluation of the current position.</returns>
-    int NegaMax(int depth, int alpha, int beta, bool quiescent = false)
+    int NegaMax(int depth, int alpha, int beta)
     {
         // For debugging purposes only.
-        if (quiescent) _quiescentNodes++;
-        else _normalNodes++;
+        if (depth <= 0) _quiescentNodes++; // #DEBUG
+        else _normalNodes++;    // #DEBUG
 
         // Can only occur during search, not at root, so setting _bestMove not required.
         if (_board.IsDraw()) return 0;
         if (_board.IsInCheckmate()) return int.MinValue + _board.PlyCount;
 
-        if (depth == 0) return NegaMax(-1, alpha, beta, true);
-
         Span<Move> legalMoves = stackalloc Move[218];
-        _board.GetLegalMovesNonAlloc(ref legalMoves, quiescent);
+        _board.GetLegalMovesNonAlloc(ref legalMoves, depth <= 0);
 
         int numMoves = legalMoves.Length;
 
@@ -137,8 +139,10 @@ public class EvilBot : IChessBot
         evalGuesses = evalGuesses[..numMoves];
         evalGuesses.Sort(legalMoves);
 
-        int evaluation = quiescent ? Evaluate() : int.MinValue + 1;
+        int evaluation = depth <= 0 ? Evaluate() : -int.MaxValue;
+
         if (evaluation >= beta) return beta;
+
         alpha = Max(alpha, evaluation);
 
         for (int i = 0; i < numMoves; i++)
@@ -146,7 +150,7 @@ public class EvilBot : IChessBot
             Move move = legalMoves[i];
 
             _board.MakeMove(move);
-            evaluation = -NegaMax(depth - 1, -beta, -alpha, quiescent);
+            evaluation = -NegaMax(depth - 1, -beta, -alpha);
             _board.UndoMove(move);
 
             if (evaluation >= beta) return beta;
@@ -171,10 +175,13 @@ public class EvilBot : IChessBot
     int Evaluate()
     {
         int score = _board.GetAllPieceLists()
-            .Sum(list => (list.IsWhitePieceList == _board.IsWhiteToMove ? 1 : -1) *
+            .Sum(list => (list.IsWhitePieceList ? 1 : -1) *
                 list.Sum(LookupPieceValue));
 
-        return score;
+        //score += KingSafetyDefendingPawns(true) - KingSafetyDefendingPawns(false);
+        //score += KingSafetyStormingPawns(true) - KingSafetyStormingPawns(false);
+
+        return score * (_board.IsWhiteToMove ? 1 : -1);
     }
 
     int LookupPieceValue(Piece piece)
@@ -185,4 +192,20 @@ public class EvilBot : IChessBot
 
         return (int)((positionalLookups[(int)piece.PieceType - 1, rank] & 0xFFFFul << offset) >> offset);
     }
+
+    int KingSafetyDefendingPawns(bool white)
+    {
+        ulong kingAttacks = GetKingAttacks(_board.GetKingSquare(white));
+
+        return GetNumberOfSetBits((white ? kingAttacks << 8 : kingAttacks >> 8) & _board.GetPieceBitboard(PieceType.Pawn, white)) * 30;
+        // This should probably have higher value later, if we have something to counteract the fact that this gives pushing center pawns in the opening negatively affects score.
+    }
+
+    int KingSafetyStormingPawns(bool white)
+    {
+        ulong kingAttacks = GetKingAttacks(_board.GetKingSquare(white));
+
+        return GetNumberOfSetBits(((white ? kingAttacks << 16 : kingAttacks >> 16) | kingAttacks) & _board.GetPieceBitboard(PieceType.Pawn, !white)) * -20;
+    }
+    // TODO: make sure to use also the king's square itself.
 }
