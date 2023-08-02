@@ -4,7 +4,7 @@ namespace ChessChallenge.Application
 {
     public static class Settings
     {
-        public const string Version = "1.18";
+        public const string Version = "1.19";
 
         public const int NumGamesForTest = 1000;
 
