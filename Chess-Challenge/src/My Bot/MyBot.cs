@@ -8,6 +8,7 @@ using System.Collections.Generic;
 using static System.Math;
 using static ChessChallenge.API.BitboardHelper;
 using static System.Int32;
+using System.Collections;
 
 public class MyBot : IChessBot
 {
@@ -88,6 +89,31 @@ public class MyBot : IChessBot
 
     int[] numNodes = new int[10]; // #DEBUG
 
+    public const int TTSize = 1 << 20;
+    Entry[] transpositiontable = new Entry[TTSize];
+
+    const int exactFlag = 0;
+    const int alphaFlag = 1;
+    const int betaFlag = 2;
+
+    /// <summary>
+    /// Entry used for the transposition table
+    /// </summary>
+    public struct Entry
+    {
+        public ulong zobrist;
+        public Move bestmove;
+        public int depth, score, flag; //0 = exact, 1 = alpha, 2 = beta
+        public Entry(ulong zobrist, Move bestmove, int depth, int score, int flag)
+        {
+            this.zobrist = zobrist;
+            this.bestmove = bestmove;
+            this.depth = depth;
+            this.score = score;
+            this.flag = flag;
+        }
+    }
+
     /// <summary>
     /// Make a move.
     /// </summary>
@@ -128,10 +154,29 @@ public class MyBot : IChessBot
         if (_board.IsInCheckmate()) return MinValue + _board.PlyCount;
 
         int best = -MaxValue;
+
+        ulong key = _board.ZobristKey;
+        Entry check = (Entry)transpositiontable[key % TTSize];
+
+        //Transposition check
+        if (check.zobrist == key && check.depth >= depth)
+        {
+            if (check.flag == exactFlag)
+                return check.score;
+            if (check.flag == alphaFlag && check.score <= alpha)
+                return alpha;
+            if (check.flag == betaFlag && check.score >= beta)
+                return beta;
+        }
+
         if (depth <= 0)
         {
             best = partialEval + Evaluate();
-            if (best >= beta) return best;
+            if (best >= beta)
+            {
+                transpositiontable[key % TTSize] = new Entry(key, _bestMove, depth, best, betaFlag);
+                return best;
+            }
             alpha = Max(alpha, best);
         }
 
@@ -151,9 +196,9 @@ public class MyBot : IChessBot
 
             int score = LookupPieceValue(targetIndex, isWhite, movePieceType) - LookupPieceValue(startIndex, isWhite, movePieceType);
 
-            if      (move.IsEnPassant) score += LookupPieceValue(startIndex + targetIndex % 8 - startIndex % 8, !isWhite, movePieceType);
-            else if (move.IsCapture)   score += LookupPieceValue(targetIndex, !isWhite, move.CapturePieceType);
-            else if (move.IsCastles)   score += LookupPieceValue(targetIndex + Sign(startIndex - targetIndex), isWhite, PieceType.Rook) - 500;
+            if (move.IsEnPassant) score += LookupPieceValue(startIndex + targetIndex % 8 - startIndex % 8, !isWhite, movePieceType);
+            else if (move.IsCapture) score += LookupPieceValue(targetIndex, !isWhite, move.CapturePieceType);
+            else if (move.IsCastles) score += LookupPieceValue(targetIndex + Sign(startIndex - targetIndex), isWhite, PieceType.Rook) - 500;
             // Rook in the corner is exactly 500 centipawns.
 
             if (move.IsPromotion) score += LookupPieceValue(targetIndex, isWhite, move.PromotionPieceType);
@@ -163,7 +208,7 @@ public class MyBot : IChessBot
         moveEvalUpdates.Sort(legalMoves); // Order moves by evaluation strength. Perhaps not ideal, but works well enough.
 
         // Higher value is better, sorted ascending, so reverse.
-        while (numMoves --> 0)
+        while (numMoves-- > 0)
         {
             Move move = legalMoves[numMoves];
 
@@ -183,7 +228,8 @@ public class MyBot : IChessBot
                 if (alpha >= beta) break;
             }
         }
-
+        int flag = best >= beta ? betaFlag : best <= alpha ? alphaFlag : exactFlag;
+        transpositiontable[key % TTSize] = new Entry(key, _bestMove, depth, best, flag);
         return best;
     }
     // Strange behaviour: bot is black, depth 6.
@@ -231,3 +277,4 @@ public class MyBot : IChessBot
     }
     // TODO: make sure to use also the king's square itself.
 }
+

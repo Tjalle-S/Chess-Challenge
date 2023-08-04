@@ -83,10 +83,11 @@ public class EvilBot : IChessBot
     };
 
     private Board _board;
-    private bool _isWhite;
 
     private int _startPly;
     private Move _bestMove;
+
+    int[] numNodes = new int[10]; // #DEBUG
 
     /// <summary>
     /// Make a move.
@@ -98,13 +99,17 @@ public class EvilBot : IChessBot
     {
         //LookupCompactor.Compact();
         _board = board;
-        _isWhite = board.IsWhiteToMove;
         _startPly = board.PlyCount;
-        _normalNodes = 0; // #DEBUG
-        _quiescentNodes = 0; // #DEBUG
 
-        _ = NegaMax(4, -int.MaxValue, int.MaxValue); // Discard can be removed to save tokens.
-        //Console.WriteLine($"Standard search: {_normalNodes} nodes. Quiescent search: {_quiescentNodes} nodes");
+        for (int i = 0; i < numNodes.Length; i++) numNodes[i] = 0; // #DEBUG
+
+        NegaMax(7, -int.MaxValue, int.MaxValue,
+            _board.GetAllPieceLists().Sum(list => (list.IsWhitePieceList == _board.IsWhiteToMove ? 1 : -1)
+                * list.Sum(piece => LookupPieceValue(piece.Square.Index, list.IsWhitePieceList, piece.PieceType))
+            )
+        );
+
+        for (int i = 0; i < numNodes.Length; i++) Console.WriteLine($"depth: {i}, nodes: {numNodes[i]}"); // #DEBUG
         return _bestMove;
     }
 
@@ -115,82 +120,100 @@ public class EvilBot : IChessBot
     /// <param name="alpha">The alpha value for pruning.</param>
     /// <param name="beta">The beta value for pruning.</param>
     /// <returns>The evaluation of the current position.</returns>
-    int NegaMax(int depth, int alpha, int beta)
+    int NegaMax(int depth, int alpha, int beta, int partialEval)
     {
-        // For debugging purposes only.
-        if (depth <= 0) _quiescentNodes++; // #DEBUG
-        else _normalNodes++;    // #DEBUG
+        numNodes[Max(depth, 0)]++; // #DEBUG
 
         // Can only occur during search, not at root, so setting _bestMove not required.
         if (_board.IsDraw()) return 0;
         if (_board.IsInCheckmate()) return int.MinValue + _board.PlyCount;
 
+        int best = -int.MaxValue;
+        if (depth <= 0)
+        {
+            best = partialEval + Evaluate();
+            if (best >= beta) return best;
+            alpha = Max(alpha, best);
+        }
+
+        // Get legal moves (only captures if quiescent search.
         Span<Move> legalMoves = stackalloc Move[218];
         _board.GetLegalMovesNonAlloc(ref legalMoves, depth <= 0);
 
         int numMoves = legalMoves.Length;
 
-        Span<int> evalGuesses = stackalloc int[218];
+        // Calculate material score change per move.
+        // Positive is better for the side to move.
+        Span<int> moveEvalUpdates = stackalloc int[numMoves];
         for (int i = 0; i < numMoves; i++)
         {
             Move move = legalMoves[i];
-            evalGuesses[i] = -((int)move.PromotionPieceType + (int)move.CapturePieceType - (int)move.MovePieceType);
+            var (startIndex, targetIndex, isWhite, movePieceType) = (move.StartSquare.Index, move.TargetSquare.Index, _board.IsWhiteToMove, move.MovePieceType);
+
+            int score = LookupPieceValue(targetIndex, isWhite, movePieceType) - LookupPieceValue(startIndex, isWhite, movePieceType);
+
+            if (move.IsEnPassant) score += LookupPieceValue(startIndex + targetIndex % 8 - startIndex % 8, !isWhite, movePieceType);
+            else if (move.IsCapture) score += LookupPieceValue(targetIndex, !isWhite, move.CapturePieceType);
+            else if (move.IsCastles) score += LookupPieceValue(targetIndex + Sign(startIndex - targetIndex), isWhite, PieceType.Rook) - 500;
+            // Rook in the corner is exactly 500 centipawns.
+
+            if (move.IsPromotion) score += LookupPieceValue(targetIndex, isWhite, move.PromotionPieceType);
+
+            moveEvalUpdates[i] = score;
         }
-        evalGuesses = evalGuesses[..numMoves];
-        evalGuesses.Sort(legalMoves);
+        moveEvalUpdates.Sort(legalMoves); // Order moves by evaluation strength. Perhaps not ideal, but works well enough.
 
-        int evaluation = depth <= 0 ? Evaluate() : -int.MaxValue;
-
-        if (evaluation >= beta) return beta;
-
-        alpha = Max(alpha, evaluation);
-
-        for (int i = 0; i < numMoves; i++)
+        // Higher value is better, sorted ascending, so reverse.
+        while (numMoves-- > 0)
         {
-            Move move = legalMoves[i];
+            Move move = legalMoves[numMoves];
 
             _board.MakeMove(move);
-            evaluation = -NegaMax(depth - 1, -beta, -alpha);
+            int evaluation = -NegaMax(depth - 1, -beta, -alpha, -(partialEval + moveEvalUpdates[numMoves]));
             _board.UndoMove(move);
 
-            if (evaluation >= beta) return beta;
-            if (evaluation > alpha)
-            {
-                alpha = evaluation;
+            if (_board.PlyCount == _startPly) Console.WriteLine($"{move}, {evaluation}"); // #DEBUG
 
+            if (evaluation > best)
+            {
+                best = evaluation;
                 if (_board.PlyCount == _startPly) _bestMove = move;
+
+                alpha = Max(alpha, evaluation);
+
+                if (alpha >= beta) break;
             }
         }
 
-        return alpha;
+        return best;
     }
-
-    int _normalNodes = 0;
-    int _quiescentNodes = 0;
+    // Strange behaviour: bot is black, depth 6.
+    // Nc3 Nf6
+    // Nf3 d5
+    // d4 c5
+    // dxc5 e6
+    // b4 a5
+    // Ba3 b6
+    // e4? Since after ...axb4 fork, or after
+    // Bxb4 Bishop is trapped after ...bxc5
+    // It should see that, but eval is still good. Only after taking and trapping the bishop it sees that it is lost.
 
     /// <summary>
     /// Performs static evaluation of the current position.
+    /// Only calculates extra features. Material score is incrementally updated.
     /// </summary>
     /// <returns>An integer score. Positive means better for the player to move.</returns>
     int Evaluate()
     {
-        int score = _board.GetAllPieceLists()
-            .Sum(list => (list.IsWhitePieceList ? 1 : -1) *
-                list.Sum(LookupPieceValue));
-
-        //score += KingSafetyDefendingPawns(true) - KingSafetyDefendingPawns(false);
-        //score += KingSafetyStormingPawns(true) - KingSafetyStormingPawns(false);
-
-        return score * (_board.IsWhiteToMove ? 1 : -1);
+        return 0;
     }
 
-    int LookupPieceValue(Piece piece)
+    int LookupPieceValue(int index, bool isWhite, PieceType pieceType)
     {
-        int index = piece.Square.Index;
-        var (rank, file) = DivRem(piece.IsWhite ? index ^ 56 : index, 8);
+        var (rank, file) = DivRem(isWhite ? index ^ 56 : index, 8);
         int offset = Min(file, 7 - file) * 16;
 
-        return (int)((positionalLookups[(int)piece.PieceType - 1, rank] & 0xFFFFul << offset) >> offset);
+        return (int)((positionalLookups[(int)pieceType - 1, rank] & 0xFFFFul << offset) >> offset);
     }
 
     int KingSafetyDefendingPawns(bool white)
