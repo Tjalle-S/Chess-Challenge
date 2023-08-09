@@ -103,13 +103,13 @@ public class EvilBot : IChessBot
 
         for (int i = 0; i < numNodes.Length; i++) numNodes[i] = 0; // #DEBUG
 
-        NegaMax(7, -int.MaxValue, int.MaxValue,
+        NegaMax(6, -int.MaxValue, int.MaxValue,
             _board.GetAllPieceLists().Sum(list => (list.IsWhitePieceList == _board.IsWhiteToMove ? 1 : -1)
                 * list.Sum(piece => LookupPieceValue(piece.Square.Index, list.IsWhitePieceList, piece.PieceType))
             )
         );
 
-        for (int i = 0; i < numNodes.Length; i++) Console.WriteLine($"depth: {i}, nodes: {numNodes[i]}"); // #DEBUG
+        //for (int i = 0; i < numNodes.Length; i++) Console.WriteLine($"depth: {i}, nodes: {numNodes[i]}"); // #DEBUG
         return _bestMove;
     }
 
@@ -164,7 +164,7 @@ public class EvilBot : IChessBot
         moveEvalUpdates.Sort(legalMoves); // Order moves by evaluation strength. Perhaps not ideal, but works well enough.
 
         // Higher value is better, sorted ascending, so reverse.
-        while (numMoves-- > 0)
+        while (numMoves --> 0)
         {
             Move move = legalMoves[numMoves];
 
@@ -172,7 +172,7 @@ public class EvilBot : IChessBot
             int evaluation = -NegaMax(depth - 1, -beta, -alpha, -(partialEval + moveEvalUpdates[numMoves]));
             _board.UndoMove(move);
 
-            if (_board.PlyCount == _startPly) Console.WriteLine($"{move}, {evaluation}"); // #DEBUG
+            //if (_board.PlyCount == _startPly) Console.WriteLine($"{move}, {evaluation}"); // #DEBUG
 
             if (evaluation > best)
             {

@@ -8,7 +8,6 @@ using System.Collections.Generic;
 using static System.Math;
 using static ChessChallenge.API.BitboardHelper;
 using static System.Int32;
-using System.Collections;
 
 public class MyBot : IChessBot
 {
@@ -89,28 +88,29 @@ public class MyBot : IChessBot
 
     int[] numNodes = new int[10]; // #DEBUG
 
-    public const int TTSize = 1 << 20;
-    Entry[] transpositiontable = new Entry[TTSize];
+    private const int TTSize = 1 << 20;
+    private readonly Entry[] transpositiontable = new Entry[TTSize]; // Right now, this is 24 Mb, so could be larger if necessary.
 
-    const int exactFlag = 0;
-    const int alphaFlag = 1;
-    const int betaFlag = 2;
+   private const int exactFlag = 0,
+                     alphaFlag = 1,
+                     betaFlag  = 2; // These constants can be inlined to save tokens.
 
     /// <summary>
     /// Entry used for the transposition table
     /// </summary>
     public struct Entry
     {
-        public ulong zobrist;
-        public Move bestmove;
-        public int depth, score, flag; //0 = exact, 1 = alpha, 2 = beta
+        public ulong Zobrist;
+        public Move Bestmove;
+        public int Depth, Score, Flag; //0 = exact, 1 = alpha, 2 = beta
+
         public Entry(ulong zobrist, Move bestmove, int depth, int score, int flag)
         {
-            this.zobrist = zobrist;
-            this.bestmove = bestmove;
-            this.depth = depth;
-            this.score = score;
-            this.flag = flag;
+            Zobrist = zobrist;
+            Bestmove = bestmove;
+            Depth = depth;
+            Score = score;
+            Flag = flag;
         }
     }
 
@@ -128,13 +128,13 @@ public class MyBot : IChessBot
 
         for (int i = 0; i < numNodes.Length; i++) numNodes[i] = 0; // #DEBUG
 
-        NegaMax(7, -MaxValue, MaxValue,
+        NegaMax(6, -MaxValue, MaxValue,
             _board.GetAllPieceLists().Sum(list => (list.IsWhitePieceList == _board.IsWhiteToMove ? 1 : -1)
                 * list.Sum(piece => LookupPieceValue(piece.Square.Index, list.IsWhitePieceList, piece.PieceType))
             )
         );
 
-        for (int i = 0; i < numNodes.Length; i++) Console.WriteLine($"depth: {i}, nodes: {numNodes[i]}"); // #DEBUG
+        //for (int i = 0; i < numNodes.Length; i++) Console.WriteLine($"depth: {i}, nodes: {numNodes[i]}"); // #DEBUG
         return _bestMove;
     }
 
@@ -144,9 +144,11 @@ public class MyBot : IChessBot
     /// <param name="depth">The maximum search depth. A deprh of 0 or less means quiescent search.</param>
     /// <param name="alpha">The alpha value for pruning.</param>
     /// <param name="beta">The beta value for pruning.</param>
+    /// <param name="partialEval">The material evaluation of the position.</param>
     /// <returns>The evaluation of the current position.</returns>
     int NegaMax(int depth, int alpha, int beta, int partialEval)
     {
+        int originalAlpha = alpha;
         numNodes[Max(depth, 0)]++; // #DEBUG
 
         // Can only occur during search, not at root, so setting _bestMove not required.
@@ -154,18 +156,21 @@ public class MyBot : IChessBot
         if (_board.IsInCheckmate()) return MinValue + _board.PlyCount;
 
         int best = -MaxValue;
+        Move bestMove = new();
 
         ulong key = _board.ZobristKey;
-        Entry check = (Entry)transpositiontable[key % TTSize];
+        Entry entry = transpositiontable[key % TTSize];
 
         //Transposition check
-        if (check.zobrist == key && check.depth >= depth)
+        if (entry.Zobrist == key && entry.Depth >= depth)
         {
-            if (check.flag == exactFlag)
-                return check.score;
-            if (check.flag == alphaFlag && check.score <= alpha)
+            if (_board.PlyCount == _startPly) _bestMove = entry.Bestmove;
+
+            if (entry.Flag == exactFlag)
+                return entry.Score;
+            if (entry.Flag == alphaFlag && entry.Score <= alpha)
                 return alpha;
-            if (check.flag == betaFlag && check.score >= beta)
+            if (entry.Flag == betaFlag && entry.Score >= beta)
                 return beta;
         }
 
@@ -174,7 +179,7 @@ public class MyBot : IChessBot
             best = partialEval + Evaluate();
             if (best >= beta)
             {
-                transpositiontable[key % TTSize] = new Entry(key, _bestMove, depth, best, betaFlag);
+                //transpositiontable[key % TTSize] = new Entry(key, _bestMove, depth, best, betaFlag);
                 return best;
             }
             alpha = Max(alpha, best);
@@ -188,7 +193,7 @@ public class MyBot : IChessBot
 
         // Calculate material score change per move.
         // Positive is better for the side to move.
-        Span<int> moveEvalUpdates = stackalloc int[numMoves];
+        Span<(int, int)> moveEvalUpdates = stackalloc (int, int)[numMoves];
         for (int i = 0; i < numMoves; i++)
         {
             Move move = legalMoves[i];
@@ -196,52 +201,45 @@ public class MyBot : IChessBot
 
             int score = LookupPieceValue(targetIndex, isWhite, movePieceType) - LookupPieceValue(startIndex, isWhite, movePieceType);
 
-            if (move.IsEnPassant) score += LookupPieceValue(startIndex + targetIndex % 8 - startIndex % 8, !isWhite, movePieceType);
-            else if (move.IsCapture) score += LookupPieceValue(targetIndex, !isWhite, move.CapturePieceType);
-            else if (move.IsCastles) score += LookupPieceValue(targetIndex + Sign(startIndex - targetIndex), isWhite, PieceType.Rook) - 500;
+            if      (move.IsEnPassant) score += LookupPieceValue(startIndex + targetIndex % 8 - startIndex % 8, !isWhite, movePieceType);
+            else if (move.IsCapture)   score += LookupPieceValue(targetIndex, !isWhite, move.CapturePieceType);
+            else if (move.IsCastles)   score += LookupPieceValue(targetIndex + Sign(startIndex - targetIndex), isWhite, PieceType.Rook) - 500;
             // Rook in the corner is exactly 500 centipawns.
 
             if (move.IsPromotion) score += LookupPieceValue(targetIndex, isWhite, move.PromotionPieceType);
 
-            moveEvalUpdates[i] = score;
+            moveEvalUpdates[i] = (entry.Bestmove == move ? 10_000 : score, score);
         }
         moveEvalUpdates.Sort(legalMoves); // Order moves by evaluation strength. Perhaps not ideal, but works well enough.
 
         // Higher value is better, sorted ascending, so reverse.
-        while (numMoves-- > 0)
+        while (numMoves --> 0)
         {
             Move move = legalMoves[numMoves];
 
             _board.MakeMove(move);
-            int evaluation = -NegaMax(depth - 1, -beta, -alpha, -(partialEval + moveEvalUpdates[numMoves]));
+            int evaluation = -NegaMax(depth - 1, -beta, -alpha, -(partialEval + moveEvalUpdates[numMoves].Item2));
             _board.UndoMove(move);
 
-            if (_board.PlyCount == _startPly) Console.WriteLine($"{move}, {evaluation}"); // #DEBUG
+            //if (_board.PlyCount == _startPly) Console.WriteLine($"{move}, {evaluation}"); // #DEBUG
 
             if (evaluation > best)
             {
                 best = evaluation;
-                if (_board.PlyCount == _startPly) _bestMove = move;
+                bestMove = move;
 
                 alpha = Max(alpha, evaluation);
 
                 if (alpha >= beta) break;
             }
         }
-        int flag = best >= beta ? betaFlag : best <= alpha ? alphaFlag : exactFlag;
-        transpositiontable[key % TTSize] = new Entry(key, _bestMove, depth, best, flag);
+
+        if (_board.PlyCount == _startPly) _bestMove = bestMove;
+
+        //int flag = best >= beta ? betaFlag : best <= alpha ? alphaFlag : exactFlag;
+        transpositiontable[key % TTSize] = new(key, bestMove, depth, best, best <= originalAlpha ? alphaFlag : best >= beta ? betaFlag : exactFlag);
         return best;
     }
-    // Strange behaviour: bot is black, depth 6.
-    // Nc3 Nf6
-    // Nf3 d5
-    // d4 c5
-    // dxc5 e6
-    // b4 a5
-    // Ba3 b6
-    // e4? Since after ...axb4 fork, or after
-    // Bxb4 Bishop is trapped after ...bxc5
-    // It should see that, but eval is still good. Only after taking and trapping the bishop it sees that it is lost.
 
     /// <summary>
     /// Performs static evaluation of the current position.
