@@ -91,51 +91,54 @@ public class MyBot : IChessBot
     private const int TTSize = 1 << 20;
     private readonly Entry[] transpositiontable = new Entry[TTSize]; // Right now, this is 24 Mb, so could be larger if necessary.
 
-   private const int exactFlag = 0,
-                     alphaFlag = 1,
-                     betaFlag  = 2; // These constants can be inlined to save tokens.
+    private const int exactFlag = 0,
+                      alphaFlag = 1,
+                      betaFlag  = 2; // These constants can be inlined to save tokens.
 
     /// <summary>
     /// Entry used for the transposition table
     /// </summary>
-    public struct Entry
-    {
-        public ulong Zobrist;
-        public Move Bestmove;
-        public int Depth, Score, Flag; //0 = exact, 1 = alpha, 2 = beta
-
-        public Entry(ulong zobrist, Move bestmove, int depth, int score, int flag)
-        {
-            Zobrist = zobrist;
-            Bestmove = bestmove;
-            Depth = depth;
-            Score = score;
-            Flag = flag;
-        }
-    }
+    private record struct Entry(ulong Zobrist, Move Bestmove, int Depth, int Score, int Flag);
 
     /// <summary>
     /// Make a move.
     /// </summary>
     /// <param name="board">The current board state.</param>
     /// <param name="timer">The current timer.</param>
-    /// <returns>The best move acoording to the bot.</returns>
+    /// <returns>The best move according to the bot.</returns>
     public Move Think(Board board, Timer timer)
     {
         //LookupCompactor.Compact();
         _board = board;
         _startPly = board.PlyCount;
 
-        for (int i = 0; i < numNodes.Length; i++) numNodes[i] = 0; // #DEBUG
+        //for (int i = 0; i < numNodes.Length; i++) numNodes[i] = 0; // #DEBUG
 
-        NegaMax(6, -MaxValue, MaxValue,
-            _board.GetAllPieceLists().Sum(list => (list.IsWhitePieceList == _board.IsWhiteToMove ? 1 : -1)
-                * list.Sum(piece => LookupPieceValue(piece.Square.Index, list.IsWhitePieceList, piece.PieceType))
-            )
-        );
+        int movesToGo = 40 - board.PlyCount / 2;
+        if (movesToGo <= 0) movesToGo = 40;
+        int alottedTime = timer.MillisecondsRemaining / movesToGo;
+
+        Move previousBestMove = new(); // Having this separately allows for mid-search breaks.
+
+        int depth;
+        for (depth = 1; depth < 40; depth++)
+        {
+            int timeRemaining = alottedTime - timer.MillisecondsElapsedThisTurn;
+            if (timer.MillisecondsElapsedThisTurn * 15 > timeRemaining) break;
+
+            NegaMax(depth, -MaxValue, MaxValue,
+                _board.GetAllPieceLists().Sum(list => (list.IsWhitePieceList == _board.IsWhiteToMove ? 1 : -1)
+                    * list.Sum(piece => LookupPieceValue(piece.Square.Index, list.IsWhitePieceList, piece.PieceType))
+                )
+            );
+
+            previousBestMove = _bestMove;
+        }
+
+        Console.WriteLine(depth);
 
         //for (int i = 0; i < numNodes.Length; i++) Console.WriteLine($"depth: {i}, nodes: {numNodes[i]}"); // #DEBUG
-        return _bestMove;
+        return previousBestMove;
     }
 
     /// <summary>
@@ -149,14 +152,13 @@ public class MyBot : IChessBot
     int NegaMax(int depth, int alpha, int beta, int partialEval)
     {
         int originalAlpha = alpha;
-        numNodes[Max(depth, 0)]++; // #DEBUG
+        //numNodes[Max(depth, 0)]++; // #DEBUG
 
         // Can only occur during search, not at root, so setting _bestMove not required.
         if (_board.IsDraw()) return 0;
         if (_board.IsInCheckmate()) return MinValue + _board.PlyCount;
 
         int best = -MaxValue;
-        Move bestMove = new();
 
         ulong key = _board.ZobristKey;
         Entry entry = transpositiontable[key % TTSize];
@@ -185,7 +187,7 @@ public class MyBot : IChessBot
             alpha = Max(alpha, best);
         }
 
-        // Get legal moves (only captures if quiescent search.
+        // Get legal moves (only captures if quiescent search).
         Span<Move> legalMoves = stackalloc Move[218];
         _board.GetLegalMovesNonAlloc(ref legalMoves, depth <= 0);
 
@@ -211,6 +213,8 @@ public class MyBot : IChessBot
             moveEvalUpdates[i] = (entry.Bestmove == move ? 10_000 : score, score);
         }
         moveEvalUpdates.Sort(legalMoves); // Order moves by evaluation strength. Perhaps not ideal, but works well enough.
+
+        Move bestMove = legalMoves.Length > 0 ? legalMoves[0] : new();
 
         // Higher value is better, sorted ascending, so reverse.
         while (numMoves --> 0)

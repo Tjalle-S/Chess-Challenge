@@ -7,6 +7,7 @@ using System.Collections.Generic;
 
 using static System.Math;
 using static ChessChallenge.API.BitboardHelper;
+using static System.Int32;
 
 namespace ChessChallenge.Example;
 
@@ -89,6 +90,32 @@ public class EvilBot : IChessBot
 
     int[] numNodes = new int[10]; // #DEBUG
 
+    private const int TTSize = 1 << 20;
+    private readonly Entry[] transpositiontable = new Entry[TTSize]; // Right now, this is 24 Mb, so could be larger if necessary.
+
+    private const int exactFlag = 0,
+                      alphaFlag = 1,
+                      betaFlag = 2; // These constants can be inlined to save tokens.
+
+    /// <summary>
+    /// Entry used for the transposition table
+    /// </summary>
+    public struct Entry
+    {
+        public ulong Zobrist;
+        public Move Bestmove;
+        public int Depth, Score, Flag; //0 = exact, 1 = alpha, 2 = beta
+
+        public Entry(ulong zobrist, Move bestmove, int depth, int score, int flag)
+        {
+            Zobrist = zobrist;
+            Bestmove = bestmove;
+            Depth = depth;
+            Score = score;
+            Flag = flag;
+        }
+    }
+
     /// <summary>
     /// Make a move.
     /// </summary>
@@ -103,7 +130,7 @@ public class EvilBot : IChessBot
 
         for (int i = 0; i < numNodes.Length; i++) numNodes[i] = 0; // #DEBUG
 
-        NegaMax(6, -int.MaxValue, int.MaxValue,
+        NegaMax(6, -MaxValue, MaxValue,
             _board.GetAllPieceLists().Sum(list => (list.IsWhitePieceList == _board.IsWhiteToMove ? 1 : -1)
                 * list.Sum(piece => LookupPieceValue(piece.Square.Index, list.IsWhitePieceList, piece.PieceType))
             )
@@ -119,20 +146,43 @@ public class EvilBot : IChessBot
     /// <param name="depth">The maximum search depth. A deprh of 0 or less means quiescent search.</param>
     /// <param name="alpha">The alpha value for pruning.</param>
     /// <param name="beta">The beta value for pruning.</param>
+    /// <param name="partialEval">The material evaluation of the position.</param>
     /// <returns>The evaluation of the current position.</returns>
     int NegaMax(int depth, int alpha, int beta, int partialEval)
     {
+        int originalAlpha = alpha;
         numNodes[Max(depth, 0)]++; // #DEBUG
 
         // Can only occur during search, not at root, so setting _bestMove not required.
         if (_board.IsDraw()) return 0;
-        if (_board.IsInCheckmate()) return int.MinValue + _board.PlyCount;
+        if (_board.IsInCheckmate()) return MinValue + _board.PlyCount;
 
-        int best = -int.MaxValue;
+        int best = -MaxValue;
+
+        ulong key = _board.ZobristKey;
+        Entry entry = transpositiontable[key % TTSize];
+
+        //Transposition check
+        if (entry.Zobrist == key && entry.Depth >= depth)
+        {
+            if (_board.PlyCount == _startPly) _bestMove = entry.Bestmove;
+
+            if (entry.Flag == exactFlag)
+                return entry.Score;
+            if (entry.Flag == alphaFlag && entry.Score <= alpha)
+                return alpha;
+            if (entry.Flag == betaFlag && entry.Score >= beta)
+                return beta;
+        }
+
         if (depth <= 0)
         {
             best = partialEval + Evaluate();
-            if (best >= beta) return best;
+            if (best >= beta)
+            {
+                //transpositiontable[key % TTSize] = new Entry(key, _bestMove, depth, best, betaFlag);
+                return best;
+            }
             alpha = Max(alpha, best);
         }
 
@@ -144,7 +194,7 @@ public class EvilBot : IChessBot
 
         // Calculate material score change per move.
         // Positive is better for the side to move.
-        Span<int> moveEvalUpdates = stackalloc int[numMoves];
+        Span<(int, int)> moveEvalUpdates = stackalloc (int, int)[numMoves];
         for (int i = 0; i < numMoves; i++)
         {
             Move move = legalMoves[i];
@@ -159,17 +209,19 @@ public class EvilBot : IChessBot
 
             if (move.IsPromotion) score += LookupPieceValue(targetIndex, isWhite, move.PromotionPieceType);
 
-            moveEvalUpdates[i] = score;
+            moveEvalUpdates[i] = (entry.Bestmove == move ? 10_000 : score, score);
         }
         moveEvalUpdates.Sort(legalMoves); // Order moves by evaluation strength. Perhaps not ideal, but works well enough.
 
+        Move bestMove = legalMoves.Length > 0 ? legalMoves[0] : new();
+
         // Higher value is better, sorted ascending, so reverse.
-        while (numMoves --> 0)
+        while (numMoves-- > 0)
         {
             Move move = legalMoves[numMoves];
 
             _board.MakeMove(move);
-            int evaluation = -NegaMax(depth - 1, -beta, -alpha, -(partialEval + moveEvalUpdates[numMoves]));
+            int evaluation = -NegaMax(depth - 1, -beta, -alpha, -(partialEval + moveEvalUpdates[numMoves].Item2));
             _board.UndoMove(move);
 
             //if (_board.PlyCount == _startPly) Console.WriteLine($"{move}, {evaluation}"); // #DEBUG
@@ -177,7 +229,7 @@ public class EvilBot : IChessBot
             if (evaluation > best)
             {
                 best = evaluation;
-                if (_board.PlyCount == _startPly) _bestMove = move;
+                bestMove = move;
 
                 alpha = Max(alpha, evaluation);
 
@@ -185,18 +237,12 @@ public class EvilBot : IChessBot
             }
         }
 
+        if (_board.PlyCount == _startPly) _bestMove = bestMove;
+
+        //int flag = best >= beta ? betaFlag : best <= alpha ? alphaFlag : exactFlag;
+        transpositiontable[key % TTSize] = new(key, bestMove, depth, best, best <= originalAlpha ? alphaFlag : best >= beta ? betaFlag : exactFlag);
         return best;
     }
-    // Strange behaviour: bot is black, depth 6.
-    // Nc3 Nf6
-    // Nf3 d5
-    // d4 c5
-    // dxc5 e6
-    // b4 a5
-    // Ba3 b6
-    // e4? Since after ...axb4 fork, or after
-    // Bxb4 Bishop is trapped after ...bxc5
-    // It should see that, but eval is still good. Only after taking and trapping the bishop it sees that it is lost.
 
     /// <summary>
     /// Performs static evaluation of the current position.
